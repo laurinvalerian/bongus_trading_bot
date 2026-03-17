@@ -1,0 +1,18 @@
+[package]
+name = "execution_engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.37", features = ["full"] }
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+futures-util = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+reqwest = "0.13.2"
+hmac = "0.12.1"
+sha2 = "0.10.9"
+hex = "0.4.3"
+rand = "0.8"
