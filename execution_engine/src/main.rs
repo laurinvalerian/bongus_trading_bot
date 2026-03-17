@@ -36,7 +36,9 @@ async fn main() {
     });
 
     // Initialize WebSocket Manager
-    let mut ws_manager = WsConnectionManager::new(tx);
+    let binance_ws_url = "wss://fstream.binance.com/ws"; // default futures WS url
+    let symbol = "btcusdt"; // example symbol
+    let mut ws_manager = WsConnectionManager::new(binance_ws_url, symbol, tx);
     
     // Block on the connection manager loop
     ws_manager.run().await;

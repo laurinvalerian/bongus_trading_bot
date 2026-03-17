@@ -27,15 +27,17 @@ pub enum WsState {
 
 pub struct WsConnectionManager {
     url: String,
+    symbol: String,
     state: WsState,
     reconnect_delay_ms: u64,
     event_sender: Sender<WsEvent>,
 }
 
 impl WsConnectionManager {
-    pub fn new(event_sender: Sender<WsEvent>) -> Self {
+    pub fn new(url: &str, symbol: &str, event_sender: Sender<WsEvent>) -> Self {
         Self {
-            url: BINANCE_WS_URL.to_string(),
+            url: url.to_string(),
+            symbol: symbol.to_lowercase(),
             state: WsState::Disconnected,
             reconnect_delay_ms: 1000,
             event_sender,
@@ -48,13 +50,13 @@ impl WsConnectionManager {
             info!("Attempting to connect to {}", self.url);
 
             match connect_async(&self.url).await {
-                Ok((ws_stream, _)) => {
+                Ok((mut ws_stream, _)) => {
                     info!("Successfully connected to Binance WebSocket.");
                     self.state = WsState::Connected;
                     let _ = self.event_sender.send(WsEvent::Connected).await;
                     self.reconnect_delay_ms = 1000; // reset backoff
 
-                    self.handle_connection(ws_stream).await;
+                    self.handle_connection(&mut ws_stream).await;
                 }
                 Err(e) => {
                     error!("Failed to connect: {}. Retrying in {}ms", e, self.reconnect_delay_ms);
@@ -69,11 +71,16 @@ impl WsConnectionManager {
         }
     }
 
-    async fn handle_connection(&mut self, mut ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>) {
-        // Subscribe to a dummy stream for demonstration
+    async fn handle_connection(&mut self, ws_stream: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>) {
+        // Subscribe to markPrice and bookTicker
+        let streams = vec![
+            format!("{}@markPrice", self.symbol),
+            format!("{}@bookTicker", self.symbol),
+        ];
+        
         let sub_req = serde_json::json!({
             "method": "SUBSCRIBE",
-            "params": ["btcusdt@aggTrade"],
+            "params": streams,
             "id": 1
         });
         
@@ -89,12 +96,43 @@ impl WsConnectionManager {
                     if text.contains(r#""e":"serverShutdown""#) {
                         warn!("CRITICAL: Received serverShutdown event from Binance!");
                         self.state = WsState::ShuttingDown;
-                        self.handle_server_shutdown(&mut ws_stream).await;
+                        self.handle_server_shutdown(ws_stream).await;
                         break; // Exit connection loop to trigger reconnect
                     }
-                    
-                    // Normal message processing would go here
-                    // info!("Received message: {}", text);
+
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                        let event = value
+                            .get("data")
+                            .and_then(|d| d.get("e"))
+                            .or_else(|| value.get("e"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
+                        let payload = value.get("data").unwrap_or(&value);
+
+                        if event == "bookTicker" {
+                            let symbol = payload.get("s").and_then(|v| v.as_str()).unwrap_or("");
+                            let bid_price_str = payload.get("b").and_then(|v| v.as_str()).unwrap_or("0");
+                            let ask_price_str = payload.get("a").and_then(|v| v.as_str()).unwrap_or("0");
+                            let bid_price = bid_price_str.parse::<f64>().unwrap_or(0.0);
+                            let ask_price = ask_price_str.parse::<f64>().unwrap_or(0.0);
+
+                            if !symbol.is_empty() {
+                                let _ = self
+                                    .event_sender
+                                    .send(WsEvent::BookTicker {
+                                        symbol: symbol.to_string(),
+                                        bid_price,
+                                        ask_price,
+                                    })
+                                    .await;
+                            }
+                        } else if event == "markPriceUpdate" {
+                            let symbol = payload.get("s").and_then(|v| v.as_str()).unwrap_or("");
+                            let mark_price = payload.get("p").and_then(|v| v.as_str()).unwrap_or("0");
+                            info!("markPrice update received: symbol={} mark_price={}", symbol, mark_price);
+                        }
+                    }
                 }
                 Ok(Message::Ping(ping_data)) => {
                     // Auto-reply with Pong

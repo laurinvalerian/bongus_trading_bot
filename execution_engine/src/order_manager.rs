@@ -1,12 +1,13 @@
 use rand::Rng;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::time::Duration;
 use tokio::sync::mpsc::Receiver;
 use tokio::time::sleep;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
-use crate::binance_rest::BinanceRest;
+use crate::binance_rest::{BinanceRest, LegVenue, TradeSide};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum SystemState {
@@ -19,6 +20,11 @@ pub enum SystemState {
 pub enum WsEvent {
     Connected,
     Disconnected,
+    BookTicker {
+        symbol: String,
+        bid_price: f64,
+        ask_price: f64,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -33,6 +39,24 @@ pub struct OrderManager {
     pub internal_orders: HashMap<String, InternalOrder>,
     pub ws_receiver: Receiver<WsEvent>,
     pub binance_rest: BinanceRest,
+    chase: Option<ChaseState>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Leg {
+    Spot,
+    Futures,
+}
+
+#[derive(Debug, Clone)]
+struct ChaseState {
+    symbol: String,
+    quantity: String,
+    maker_leg: Leg,
+    maker_client_order_id: String,
+    taker_client_order_id: String,
+    maker_side: TradeSide,
+    taker_side: TradeSide,
 }
 
 impl OrderManager {
@@ -42,6 +66,7 @@ impl OrderManager {
             internal_orders: HashMap::new(),
             ws_receiver,
             binance_rest: BinanceRest::new(api_key, secret_key),
+            chase: None,
         }
     }
 
@@ -54,14 +79,209 @@ impl OrderManager {
                     info!("OrderManager received WebSocket Connected event.");
                     if self.state == SystemState::Disconnected {
                         self.execute_reconciliation_sequence().await;
+                        if self.state == SystemState::Trading {
+                            self.start_default_chase_if_idle().await;
+                        }
                     }
                 }
                 WsEvent::Disconnected => {
                     warn!("OrderManager received WebSocket Disconnected event.");
                     self.state = SystemState::Disconnected;
+                    self.chase = None;
+                }
+                WsEvent::BookTicker {
+                    symbol,
+                    bid_price,
+                    ask_price,
+                } => {
+                    if self.state != SystemState::Trading {
+                        continue;
+                    }
+                    self.on_book_ticker(symbol, bid_price, ask_price).await;
                 }
             }
         }
+    }
+
+    fn generate_client_order_id(prefix: &str) -> String {
+        let ts_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let nonce: u32 = rand::thread_rng().gen_range(1000..9999);
+        format!("bngs_{}_{}_{}", prefix, ts_ms, nonce)
+    }
+
+    async fn start_default_chase_if_idle(&mut self) {
+        if self.chase.is_some() {
+            return;
+        }
+
+        let symbol = "BTCUSDT".to_string();
+        let quantity = "0.001".to_string();
+        let maker_client_order_id = Self::generate_client_order_id("mk");
+        let taker_client_order_id = Self::generate_client_order_id("tk");
+
+        self.chase = Some(ChaseState {
+            symbol,
+            quantity,
+            maker_leg: Leg::Spot,
+            maker_client_order_id,
+            taker_client_order_id,
+            maker_side: TradeSide::Buy,
+            taker_side: TradeSide::Sell,
+        });
+
+        info!("Initialized chase state and waiting for bookTicker to place maker order.");
+    }
+
+    async fn on_book_ticker(&mut self, symbol: String, bid_price: f64, _ask_price: f64) {
+        let Some(chase_snapshot) = self.chase.clone() else {
+            return;
+        };
+
+        if !chase_snapshot.symbol.eq_ignore_ascii_case(&symbol) {
+            return;
+        }
+
+        if self.internal_orders.contains_key(&chase_snapshot.maker_client_order_id) {
+            return;
+        }
+
+        let maker_price = format!("{:.2}", bid_price);
+        info!(
+            "Placing maker LIMIT on less-liquid leg: symbol={} price={} cid={}",
+            chase_snapshot.symbol, maker_price, chase_snapshot.maker_client_order_id
+        );
+
+        let maker_res = match chase_snapshot.maker_leg {
+            Leg::Spot => {
+                self.binance_rest
+                    .place_spot_limit_order(
+                        &chase_snapshot.symbol,
+                        chase_snapshot.maker_side,
+                        &chase_snapshot.quantity,
+                        &maker_price,
+                        &chase_snapshot.maker_client_order_id,
+                    )
+                    .await
+            }
+            Leg::Futures => {
+                error!("Futures maker LIMIT leg not yet implemented in this phase setup.");
+                return;
+            }
+        };
+
+        match maker_res {
+            Ok(body) => {
+                info!("Maker order accepted by exchange: {}", body);
+                self.internal_orders.insert(
+                    chase_snapshot.maker_client_order_id.clone(),
+                    InternalOrder {
+                        client_order_id: chase_snapshot.maker_client_order_id.clone(),
+                        symbol: chase_snapshot.symbol.clone(),
+                        status: "NEW".to_string(),
+                    },
+                );
+            }
+            Err(err) => {
+                error!("Failed to place maker LIMIT order: {}", err);
+                return;
+            }
+        }
+
+        let maker_filled = self
+            .wait_for_fill(
+                LegVenue::Spot,
+                &chase_snapshot.symbol,
+                &chase_snapshot.maker_client_order_id,
+                25,
+                Duration::from_millis(20),
+            )
+            .await;
+
+        if !maker_filled {
+            warn!(
+                "Maker order not confirmed FILLED in time; chase remains unhedged until managed by higher-level logic. cid={}",
+                chase_snapshot.maker_client_order_id
+            );
+            return;
+        }
+
+        info!(
+            "Maker FILLED confirmed. Firing taker MARKET hedge immediately. cid={}",
+            chase_snapshot.taker_client_order_id
+        );
+
+        match self
+            .binance_rest
+            .place_futures_market_order(
+                &chase_snapshot.symbol,
+                chase_snapshot.taker_side,
+                &chase_snapshot.quantity,
+                &chase_snapshot.taker_client_order_id,
+            )
+            .await
+        {
+            Ok(body) => {
+                info!("Taker hedge submission response: {}", body);
+                let taker_filled = self
+                    .wait_for_fill(
+                        LegVenue::UsdtFutures,
+                        &chase_snapshot.symbol,
+                        &chase_snapshot.taker_client_order_id,
+                        20,
+                        Duration::from_millis(10),
+                    )
+                    .await;
+
+                if taker_filled {
+                    info!("Chase cycle completed with confirmed maker+taker fills.");
+                } else {
+                    warn!(
+                        "Taker order submitted but not yet FILLED-confirmed. Immediate reconciliation required. cid={}",
+                        chase_snapshot.taker_client_order_id
+                    );
+                }
+            }
+            Err(err) => {
+                error!("Failed to submit taker MARKET hedge: {}", err);
+            }
+        }
+    }
+
+    async fn wait_for_fill(
+        &self,
+        venue: LegVenue,
+        symbol: &str,
+        client_order_id: &str,
+        max_attempts: usize,
+        interval: Duration,
+    ) -> bool {
+        for _ in 0..max_attempts {
+            match self
+                .binance_rest
+                .get_order_by_client_id(venue, symbol, client_order_id)
+                .await
+            {
+                Ok(raw) => {
+                    let parsed: Result<Value, _> = serde_json::from_str(&raw);
+                    if let Ok(value) = parsed {
+                        let status = value.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                        if status == "FILLED" {
+                            return true;
+                        }
+                    }
+                }
+                Err(err) => {
+                    warn!("Error querying order status ({}): {}", client_order_id, err);
+                }
+            }
+
+            sleep(interval).await;
+        }
+
+        false
     }
 
     async fn execute_reconciliation_sequence(&mut self) {

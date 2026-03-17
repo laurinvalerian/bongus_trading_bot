@@ -1,0 +1,80 @@
+"""Feature engineering for funding-arb research and model training."""
+
+import math
+
+import polars as pl
+
+from config import FUNDING_PERIODS_PER_YEAR
+
+
+def build_feature_frame(df: pl.DataFrame, lookback_minutes: int = 60) -> pl.DataFrame:
+    required = {"timestamp", "spot_close", "perp_close", "funding_rate"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {sorted(missing)}")
+
+    feature_df = (
+        df.sort("timestamp")
+        .with_columns(
+            ((pl.col("perp_close") - pl.col("spot_close")) / pl.col("spot_close")).alias(
+                "basis_premium_pct"
+            ),
+            pl.col("spot_close").pct_change().fill_null(0.0).alias("spot_ret_1m"),
+            pl.col("perp_close").pct_change().fill_null(0.0).alias("perp_ret_1m"),
+            (pl.col("funding_rate") * FUNDING_PERIODS_PER_YEAR).alias("annualized_funding"),
+        )
+        .with_columns(
+            pl.col("basis_premium_pct")
+            .rolling_mean(window_size=lookback_minutes)
+            .alias("basis_mean"),
+            pl.col("basis_premium_pct")
+            .rolling_std(window_size=lookback_minutes)
+            .alias("basis_std"),
+            pl.col("spot_ret_1m")
+            .rolling_std(window_size=lookback_minutes)
+            .fill_null(0.0)
+            .alias("spot_vol_lookback"),
+            (pl.col("spot_close") / pl.col("spot_close").shift(lookback_minutes) - 1.0)
+            .fill_null(0.0)
+            .alias("spot_trend_lookback"),
+            pl.col("annualized_funding")
+            .rolling_mean(window_size=lookback_minutes)
+            .alias("funding_trend"),
+        )
+        .with_columns(
+            pl.when(pl.col("basis_std") > 0)
+            .then((pl.col("basis_premium_pct") - pl.col("basis_mean")) / pl.col("basis_std"))
+            .otherwise(0.0)
+            .alias("basis_zscore"),
+            (pl.col("spot_vol_lookback") * math.sqrt(60 * 24 * 365)).alias(
+                "spot_vol_annualized"
+            ),
+        )
+        .drop("basis_mean", "basis_std")
+    )
+
+    if {"bid_ask_spread_bps", "depth_usd"}.issubset(set(feature_df.columns)):
+        feature_df = feature_df.with_columns(
+            (
+                (1.0 / (1.0 + pl.col("bid_ask_spread_bps").abs()))
+                * pl.col("depth_usd").log1p()
+            ).alias("liquidity_score")
+        )
+    else:
+        feature_df = feature_df.with_columns(pl.lit(0.0).alias("liquidity_score"))
+
+    return feature_df
+
+
+def add_future_edge_target(df: pl.DataFrame, horizon_minutes: int = 60) -> pl.DataFrame:
+    if "basis_premium_pct" not in df.columns:
+        raise ValueError("Run build_feature_frame first before adding target")
+
+    return df.with_columns(
+        (
+            pl.col("funding_rate").shift(-horizon_minutes)
+            - pl.col("basis_premium_pct").shift(-horizon_minutes).abs() * 0.25
+        )
+        .fill_null(0.0)
+        .alias("future_edge_target")
+    )

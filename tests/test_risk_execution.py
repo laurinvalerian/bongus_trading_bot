@@ -1,0 +1,57 @@
+"""Tests for risk engine and execution routing."""
+
+from execution_alpha import OrderIntent, VenueQuote, route_order
+from risk_engine import RiskEngine, RiskLimits, RiskState
+
+
+def test_route_order_returns_plan():
+    quotes = [
+        VenueQuote(
+            venue="a",
+            bid=100.0,
+            ask=100.02,
+            depth_usd=2_000_000,
+            fee_bps=6.0,
+            latency_ms=40,
+            reliability=0.995,
+        ),
+        VenueQuote(
+            venue="b",
+            bid=99.99,
+            ask=100.03,
+            depth_usd=500_000,
+            fee_bps=5.0,
+            latency_ms=200,
+            reliability=0.96,
+        ),
+    ]
+    intent = OrderIntent(symbol="BTCUSDT", side="buy", quantity=20_000, urgency=0.6, max_slippage_bps=8)
+    plan = route_order(intent, quotes)
+
+    assert plan.venue in {"a", "b"}
+    assert plan.expected_cost_bps > 0
+    assert 0.0 <= plan.fill_probability <= 1.0
+
+
+def test_risk_engine_kill_switch_on_drawdown():
+    engine = RiskEngine(
+        RiskLimits(
+            max_gross_exposure_usd=100_000,
+            max_symbol_concentration=0.6,
+            max_drawdown_pct=0.1,
+            max_data_staleness_minutes=10,
+            max_latency_ms=200,
+        )
+    )
+    state = RiskState(
+        gross_exposure_usd=90_000,
+        symbol_concentration=0.5,
+        drawdown_pct=0.2,
+        data_staleness_minutes=2,
+        venue_latency_ms=20,
+    )
+
+    decision = engine.evaluate(state)
+    assert not decision.allow_new_risk
+    assert decision.derisk_required
+    assert decision.kill_switch

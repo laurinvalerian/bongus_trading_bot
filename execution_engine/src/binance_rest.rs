@@ -12,6 +12,27 @@ pub struct BinanceRest {
     base_url: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum TradeSide {
+    Buy,
+    Sell,
+}
+
+impl TradeSide {
+    fn as_str(&self) -> &'static str {
+        match self {
+            TradeSide::Buy => "BUY",
+            TradeSide::Sell => "SELL",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum LegVenue {
+    Spot,
+    UsdtFutures,
+}
+
 impl BinanceRest {
     pub fn new(api_key: String, secret_key: String) -> Self {
         Self {
@@ -60,6 +81,30 @@ impl BinanceRest {
             .header("X-MBX-APIKEY", &self.api_key)
     }
 
+    fn build_signed_request_with_base(
+        &self,
+        method: Method,
+        base_url: &str,
+        endpoint: &str,
+        mut params: Vec<(&str, String)>,
+    ) -> RequestBuilder {
+        params.push(("timestamp", Self::current_timestamp().to_string()));
+
+        let query_string = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<String>>()
+            .join("&");
+
+        let signature = self.sign(&query_string);
+        let final_query = format!("{}&signature={}", query_string, signature);
+        let url = format!("{}{}?{}", base_url, endpoint, final_query);
+
+        self.client
+            .request(method, &url)
+            .header("X-MBX-APIKEY", &self.api_key)
+    }
+
     pub async fn get_open_orders(&self) -> Result<String, reqwest::Error> {
         let req = self.build_signed_request(Method::GET, "/api/v3/openOrders", vec![]);
         req.send().await?.text().await
@@ -76,6 +121,92 @@ impl BinanceRest {
             ("origClientOrderId", order_id.to_string()),
         ];
         let req = self.build_signed_request(Method::DELETE, "/api/v3/order", params);
+        req.send().await?.text().await
+    }
+
+    pub async fn place_spot_limit_order(
+        &self,
+        symbol: &str,
+        side: TradeSide,
+        quantity: &str,
+        price: &str,
+        client_order_id: &str,
+    ) -> Result<String, reqwest::Error> {
+        let params = vec![
+            ("symbol", symbol.to_string()),
+            ("side", side.as_str().to_string()),
+            ("type", "LIMIT".to_string()),
+            ("timeInForce", "GTC".to_string()),
+            ("quantity", quantity.to_string()),
+            ("price", price.to_string()),
+            ("newClientOrderId", client_order_id.to_string()),
+        ];
+
+        let req = self.build_signed_request_with_base(
+            Method::POST,
+            "https://api.binance.com",
+            "/api/v3/order",
+            params,
+        );
+        req.send().await?.text().await
+    }
+
+    pub async fn place_futures_market_order(
+        &self,
+        symbol: &str,
+        side: TradeSide,
+        quantity: &str,
+        client_order_id: &str,
+    ) -> Result<String, reqwest::Error> {
+        let params = vec![
+            ("symbol", symbol.to_string()),
+            ("side", side.as_str().to_string()),
+            ("type", "MARKET".to_string()),
+            ("quantity", quantity.to_string()),
+            ("newClientOrderId", client_order_id.to_string()),
+        ];
+
+        let req = self.build_signed_request_with_base(
+            Method::POST,
+            "https://fapi.binance.com",
+            "/fapi/v1/order",
+            params,
+        );
+        req.send().await?.text().await
+    }
+
+    pub async fn get_order_by_client_id(
+        &self,
+        venue: LegVenue,
+        symbol: &str,
+        client_order_id: &str,
+    ) -> Result<String, reqwest::Error> {
+        let params = match venue {
+            LegVenue::Spot => vec![
+                ("symbol", symbol.to_string()),
+                ("origClientOrderId", client_order_id.to_string()),
+            ],
+            LegVenue::UsdtFutures => vec![
+                ("symbol", symbol.to_string()),
+                ("origClientOrderId", client_order_id.to_string()),
+            ],
+        };
+
+        let req = match venue {
+            LegVenue::Spot => self.build_signed_request_with_base(
+                Method::GET,
+                "https://api.binance.com",
+                "/api/v3/order",
+                params,
+            ),
+            LegVenue::UsdtFutures => self.build_signed_request_with_base(
+                Method::GET,
+                "https://fapi.binance.com",
+                "/fapi/v1/order",
+                params,
+            ),
+        };
+
         req.send().await?.text().await
     }
 }
