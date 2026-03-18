@@ -23,14 +23,14 @@ FUNDING_SNAPSHOT_HOURS = [0, 8, 16]
 
 # ── Entry Thresholds ─────────────────────────────────────────────────────────
 # Entry APY threshold is dynamically calculated as TAKER_FEE * 3 * FUNDING_PERIODS_PER_YEAR
-ENTRY_PREMIUM_THRESHOLD = 0.001      # 0.1% perp premium over spot
+ENTRY_PREMIUM_THRESHOLD = 0.0008     # 0.08% perp premium over spot (more frequent trading)
 
 # ── Exit Thresholds ──────────────────────────────────────────────────────────
 EXIT_ANN_FUNDING_THRESHOLD = 0.10    # 10% annualized – too low to justify
 EXIT_DISCOUNT_THRESHOLD = 0.0        # exit if perp trades at or below spot
 
 # ── Capital ───────────────────────────────────────────────────────────────────
-NOTIONAL_PER_TRADE = 10_000  # USD notional deployed per side
+NOTIONAL_PER_TRADE = 50_000  # USD notional deployed per side (5x leverage on $10k demo)
 
 # ── Data & Latency Controls ────────────────────────────────────────────────
 MAX_ALLOWED_GAP_MINUTES = 1
@@ -39,6 +39,7 @@ MAX_FUNDING_STALENESS_MINUTES = 8 * 60
 # ── Risk Limits ─────────────────────────────────────────────────────────────
 MAX_GROSS_EXPOSURE_USD = 200_000
 MAX_SYMBOL_CONCENTRATION = 0.50
+SOFT_DRAWDOWN_PCT = 0.05
 MAX_DRAWDOWN_PCT = 0.10
 MAX_VENUE_LATENCY_MS = 400
 

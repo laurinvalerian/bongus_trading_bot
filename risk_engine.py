@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class RiskLimits:
     max_gross_exposure_usd: float = 200_000.0
     max_symbol_concentration: float = 0.5
+    soft_drawdown_pct: float = 0.05
     max_drawdown_pct: float = 0.1
     max_data_staleness_minutes: int = 12
     max_latency_ms: int = 400
@@ -26,6 +27,7 @@ class RiskDecision:
     allow_new_risk: bool
     derisk_required: bool
     kill_switch: bool
+    position_scale: float  # Add position scale for dynamic scaling
     reasons: list[str]
 
 
@@ -37,6 +39,7 @@ class RiskEngine:
         reasons: list[str] = []
         derisk_required = False
         kill_switch = False
+        position_scale = 1.0
 
         if state.gross_exposure_usd > self.limits.max_gross_exposure_usd:
             reasons.append("gross exposure limit exceeded")
@@ -50,6 +53,9 @@ class RiskEngine:
             reasons.append("max drawdown breached")
             derisk_required = True
             kill_switch = True
+        elif state.drawdown_pct >= self.limits.soft_drawdown_pct:
+            reasons.append("soft drawdown active: halving leverage")
+            position_scale = 0.5
 
         if state.data_staleness_minutes > self.limits.max_data_staleness_minutes:
             reasons.append("market data staleness too high")
@@ -64,6 +70,7 @@ class RiskEngine:
             allow_new_risk=allow_new_risk,
             derisk_required=derisk_required,
             kill_switch=kill_switch,
+            position_scale=position_scale,
             reasons=reasons,
         )
 

@@ -65,3 +65,7 @@ out2.txt
 out3.txt
 build_err.txt
 test_err.txt
+
+# Data
+data/
+*.parquet
