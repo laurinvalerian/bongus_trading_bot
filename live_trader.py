@@ -11,6 +11,7 @@ import config
 
 # Disable SSL warnings for the local testnet run
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+TRADING_STARTUP_GRACE_SECONDS = int(os.getenv("TRADING_STARTUP_GRACE_SECONDS", "30"))
 
 def load_optimal_params():
     """Loads dynamically optimized parameters if available, else falls back to config.py defaults."""
@@ -55,6 +56,7 @@ def main():
     print("Starting Live Trading Monitor...")
     print("Connecting to local Rust execution engine...")
     engine = RustIPCBridge(endpoint="tcp://127.0.0.1:5555")
+    start_time = time.time()
     
     in_position = False
 
@@ -62,7 +64,7 @@ def main():
         # 1. Dynamically Load Best Parameters for this minute
         optimal = load_optimal_params()
         dynamic_entry = optimal.get("ENTRY_ANN_FUNDING_THRESHOLD", DEFAULT_ENTRY_ANN)
-        dynamic_exit = optimal.get("EXIT_ANN_FUNDING_THRESHOLD", DEFAULT_ENTRY_ANN / 2.0)
+        dynamic_exit = optimal.get("EXIT_ANN_FUNDING_THRESHOLD", config.EXIT_ANN_FUNDING_THRESHOLD)
         dynamic_slippage = optimal.get("SLIPPAGE_ESTIMATE", 10.0) # BPS
 
         success, spot_price, ann_funding = get_live_data("BTCUSDT")
@@ -70,6 +72,12 @@ def main():
         if success:
             qty = round(NOTIONAL_PER_TRADE / spot_price, 4)
             print(f"BTCUSDT Price: ${spot_price:.2f} | Ann. Funding: {ann_funding:.2%} | Action Threshold: {dynamic_entry:.2%}")
+
+            if time.time() - start_time < TRADING_STARTUP_GRACE_SECONDS:
+                remaining = int(TRADING_STARTUP_GRACE_SECONDS - (time.time() - start_time))
+                print(f"Waiting for engine warm-up before sending intents ({remaining}s left)...")
+                time.sleep(10)
+                continue
 
             # Simple strategy check: If over threshold and not in position, Fire!
             if ann_funding >= dynamic_entry and not in_position:

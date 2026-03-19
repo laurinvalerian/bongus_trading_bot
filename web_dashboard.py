@@ -159,7 +159,18 @@ HTML_CONTENT = """
                 document.getElementById("total-pnl").style.color = totalColor;
                 document.getElementById("pnl-details").innerHTML = pnlHtml;
             }
-            else if (data.event === "OrderUpdate" || data.event === "Connected" || data.event === "Disconnected") {
+            else if (
+                data.event === "OrderUpdate" ||
+                data.event === "Connected" ||
+                data.event === "Disconnected" ||
+                data.event === "OrderPlaced" ||
+                data.event === "OrderPlacementFailed" ||
+                data.event === "ReconciliationStarted" ||
+                data.event === "ReconciliationCompleted" ||
+                data.event === "ReconciliationFallback" ||
+                data.event === "AlphaIgnored" ||
+                data.event === "ChaseReset"
+            ) {
                 counters.events++;
                 document.getElementById("count-events").innerText = counters.events;
                 
@@ -175,6 +186,27 @@ HTML_CONTENT = """
                     if (data.status === "FILLED") div.style.color = "#4ade80";
                     else if (data.status === "CANCELED" || data.status === "EXPIRED") div.style.color = "#f87171";
                     else div.style.color = "#fbbf24";
+                } else if (data.event === "OrderPlaced") {
+                    div.innerText = `[${timeStr}] ORDER PLACED: ${data.symbol} ${data.side} qty=${data.quantity} (${data.leg})`;
+                    div.style.color = "#60a5fa";
+                } else if (data.event === "OrderPlacementFailed") {
+                    div.innerText = `[${timeStr}] ORDER FAILED: ${data.symbol || "?"} (${data.leg}) cid=${data.client_order_id || "n/a"}`;
+                    div.style.color = "#f87171";
+                } else if (data.event === "ReconciliationStarted") {
+                    div.innerText = `[${timeStr}] ENGINE: Reconciliation started`;
+                    div.style.color = "#fbbf24";
+                } else if (data.event === "ReconciliationCompleted") {
+                    div.innerText = `[${timeStr}] ENGINE: Reconciliation completed (${data.mode})`;
+                    div.style.color = "#4ade80";
+                } else if (data.event === "ReconciliationFallback") {
+                    div.innerText = `[${timeStr}] ENGINE: Reconciliation fallback (${data.reason})`;
+                    div.style.color = "#f87171";
+                } else if (data.event === "AlphaIgnored") {
+                    div.innerText = `[${timeStr}] ALPHA IGNORED: ${data.reason} (${data.state}) ${data.symbol}`;
+                    div.style.color = "#fbbf24";
+                } else if (data.event === "ChaseReset") {
+                    div.innerText = `[${timeStr}] ENGINE: Chase reset (${data.reason})`;
+                    div.style.color = "#f87171";
                 } else {
                     div.innerText = `[${timeStr}] ENGINE: ${data.event} - ${data.symbol}`;
                     div.style.color = data.event === "Connected" ? "#60a5fa" : "#f87171";

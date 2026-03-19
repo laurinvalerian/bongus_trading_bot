@@ -170,12 +170,12 @@ impl BinanceRest {
     }
 
     pub async fn get_open_orders(&self) -> Result<String, reqwest::Error> {
-        let req = self.build_signed_request(Method::GET, "/api/v3/openOrders", vec![]);
+        let req = self.build_signed_request_with_base(Method::GET, &self.base_url, "/fapi/v1/openOrders", vec![]);
         req.send().await?.text().await
     }
 
     pub async fn get_account(&self) -> Result<String, reqwest::Error> {
-        let req = self.build_signed_request(Method::GET, "/api/v3/account", vec![]);
+        let req = self.build_signed_request_with_base(Method::GET, &self.base_url, "/fapi/v2/account", vec![]);
         req.send().await?.text().await
     }
 

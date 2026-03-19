@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 @dataclass
 class RiskLimits:
-    max_gross_exposure_usd: float = 200_000.0
+    max_gross_exposure_usd: float = 40_000.0
     max_symbol_concentration: float = 0.5
     soft_drawdown_pct: float = 0.05
     max_drawdown_pct: float = 0.1
