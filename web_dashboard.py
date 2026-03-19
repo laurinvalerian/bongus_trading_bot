@@ -132,3 +132,8 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         active_connections.remove(websocket)
+
+if __name__ == "__main__":
+    import uvicorn
+    # Make sure we don't block the ports
+    uvicorn.run("web_dashboard:app", host="127.0.0.1", port=8000, reload=False)

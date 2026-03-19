@@ -10,7 +10,7 @@ use tracing::{info, warn, error};
 
 use crate::order_manager::WsEvent;
 
-const BINANCE_WS_URL: &str = "wss://stream.binance.com:9443/ws";
+const BINANCE_WS_URL: &str = "wss://stream.binancefuture.com/ws";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ServerShutdownEvent {

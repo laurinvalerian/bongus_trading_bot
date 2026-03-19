@@ -121,11 +121,21 @@ def compute_portfolio_stats(trades: pl.DataFrame) -> dict:
             "worst_trade_pct": 0.0,
             "total_gross_yield_pct": 0.0,
             "total_fees_pct": 0.0,
+            "avg_win_pct": 0.0,
+            "avg_loss_pct": 0.0,
+            "risk_reward_ratio": 0.0,
         }
 
     total = trades.height
-    winners = trades.filter(pl.col("net_pnl_pct") > 0).height
-    losers = total - winners
+    winning_trades = trades.filter(pl.col("net_pnl_pct") > 0)
+    losing_trades = trades.filter(pl.col("net_pnl_pct") <= 0)
+    
+    winners = winning_trades.height
+    losers = losing_trades.height
+
+    avg_win_pct = winning_trades["net_pnl_pct"].mean() if winners > 0 else 0.0
+    avg_loss_pct = losing_trades["net_pnl_pct"].mean() if losers > 0 else 0.0
+    risk_reward_ratio = abs(avg_win_pct / avg_loss_pct) if avg_loss_pct != 0 else 0.0
 
     return {
         "total_trades": total,
@@ -141,4 +151,7 @@ def compute_portfolio_stats(trades: pl.DataFrame) -> dict:
         "worst_trade_pct": trades["net_pnl_pct"].min(),
         "total_gross_yield_pct": trades["gross_yield_pct"].sum(),
         "total_fees_pct": trades["fees_pct"].sum(),
+        "avg_win_pct": avg_win_pct,
+        "avg_loss_pct": avg_loss_pct,
+        "risk_reward_ratio": risk_reward_ratio,
     }

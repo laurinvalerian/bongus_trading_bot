@@ -115,7 +115,7 @@ def route_order(intent: OrderIntent, quotes: list[VenueQuote]) -> ExecutionPlan:
     return best
 
 class RustIPCBridge:
-    def __init__(self, endpoint="ipc:///tmp/bongus.sock"):
+    def __init__(self, endpoint="tcp://127.0.0.1:5555"):
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.PUSH)
         self.socket.connect(endpoint)

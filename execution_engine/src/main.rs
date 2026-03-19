@@ -24,6 +24,13 @@ async fn main() {
     tracing::subscriber::set_global_default(subscriber)
         .expect("setting default subscriber failed");
 
+    // Attempt to load .env from the root directory
+    let root_env = std::env::current_dir().unwrap().join("../.env");
+    let result = dotenvy::from_path(&root_env);
+    tracing::info!("Loaded .env from {:?}: {:?}", root_env, result.is_ok());
+
+    let _ = dotenvy::dotenv(); // Also try default locations
+
     tracing::info!("Starting Binance Execution Engine (Rust)...");
 
     // Channels for primary execution
@@ -50,11 +57,19 @@ async fn main() {
     // Broadcast channel for Python Dashboard IPC
     let (dash_tx, _) = broadcast::channel(10000);
 
+    // Load API keys securely from env
+    let api_key = std::env::var("BINANCE_API_KEY").unwrap_or_else(|_| "".to_string());
+    let secret_key = std::env::var("BINANCE_SECRET_KEY").unwrap_or_else(|_| std::env::var("BINANCE_API_SECRET").unwrap_or_else(|_| "".to_string()));
+
+    if api_key.is_empty() {
+        tracing::warn!("BINANCE_API_KEY is missing or empty. Please check your .env file.");
+    }
+
     let mut order_manager = OrderManager::new(
         engine_rx,
         engine_tx,
-        "DUMMY_API_KEY".to_string(),
-        "DUMMY_SECRET_KEY".to_string(),
+        api_key.clone(),
+        secret_key.clone(),
         dash_tx.clone()
     );
 
@@ -64,7 +79,7 @@ async fn main() {
     });
 
     // Spawn ZeroMQ IPC Server using Unix Domain Sockets for lower latency
-    let zmq_endpoint = "ipc:///tmp/bongus.sock";
+    let zmq_endpoint = "tcp://127.0.0.1:5555";
     let mut ipc_server = ipc::IpcServer::new(zmq_endpoint, alpha_tx);
     tokio::spawn(async move {
         ipc_server.run().await;
@@ -72,8 +87,8 @@ async fn main() {
 
     // Spawn User Data WebSocket Manager
     let user_data_rest_client = BinanceRest::new(
-        "DUMMY_API_KEY".to_string(),
-        "DUMMY_SECRET_KEY".to_string(),
+        api_key,
+        secret_key,
     );
     let ud_tx = ws_tx.clone();
     tokio::spawn(async move {
@@ -87,7 +102,7 @@ async fn main() {
         "BCHUSDT", "UNIUSDT", "NEARUSDT", "APTUSDT", "XLMUSDT", "ATOMUSDT", "ARBUSDT"
     ];
 
-    let binance_ws_url = "wss://fstream.binance.com/ws";
+    let binance_ws_url = "wss://stream.binancefuture.com/ws";
 
     // Spawn WsConnectionManager for each asset
     for symbol in top_assets {

@@ -46,12 +46,12 @@ impl BinanceRest {
             client: Client::new(),
             api_key,
             secret_key,
-            base_url: "https://api.binance.com".to_string(), // Can be parameterised
+            base_url: "https://testnet.binancefuture.com".to_string(), // Updated for Spot Testnet
         }
     }
 
     pub async fn get_exchange_info(&self) -> Result<std::collections::HashMap<String, ExchangeSymbolInfo>, String> {
-        let url = "https://fapi.binance.com/fapi/v1/exchangeInfo";
+        let url = "https://testnet.binancefuture.com/fapi/v1/exchangeInfo";
         let resp_result = self.client.get(url).send().await;
         let resp = match resp_result {
             Ok(r) => r,
@@ -198,7 +198,7 @@ impl BinanceRest {
             ("symbol", symbol.to_string()),
             ("origClientOrderId", order_id.to_string()),
         ];
-        let req = self.build_signed_request_with_base(Method::DELETE, "https://fapi.binance.com", "/fapi/v1/order", params);
+        let req = self.build_signed_request_with_base(Method::DELETE, "https://testnet.binancefuture.com", "/fapi/v1/order", params);
         req.send().await?.text().await
     }
 
@@ -219,7 +219,7 @@ impl BinanceRest {
 
         let req = self.build_signed_request_with_base(
             Method::POST,
-            "https://api.binance.com",
+            "https://testnet.binance.vision",
             "/api/v3/order",
             params,
         );
@@ -246,7 +246,7 @@ impl BinanceRest {
 
         let req = self.build_signed_request_with_base(
             Method::POST,
-            "https://api.binance.com",
+            "https://testnet.binance.vision",
             "/api/v3/order",
             params,
         );
@@ -273,7 +273,7 @@ impl BinanceRest {
 
         let req = self.build_signed_request_with_base(
             Method::POST,
-            "https://fapi.binance.com",
+            "https://testnet.binancefuture.com",
             "/fapi/v1/order",
             params,
         );
@@ -297,7 +297,7 @@ impl BinanceRest {
 
         let req = self.build_signed_request_with_base(
             Method::POST,
-            "https://fapi.binance.com",
+            "https://testnet.binancefuture.com",
             "/fapi/v1/order",
             params,
         );
@@ -324,13 +324,13 @@ impl BinanceRest {
         let req = match venue {
             LegVenue::Spot => self.build_signed_request_with_base(
                 Method::GET,
-                "https://api.binance.com",
+                "https://testnet.binance.vision",
                 "/api/v3/order",
                 params,
             ),
             LegVenue::UsdtFutures => self.build_signed_request_with_base(
                 Method::GET,
-                "https://fapi.binance.com",
+                "https://testnet.binancefuture.com",
                 "/fapi/v1/order",
                 params,
             ),
@@ -340,19 +340,19 @@ impl BinanceRest {
     }
 
     pub async fn create_listen_key(&self) -> Result<String, reqwest::Error> {
-        let url = "https://fapi.binance.com/fapi/v1/listenKey".to_string();
+        let url = "https://testnet.binancefuture.com/fapi/v1/listenKey".to_string();
         let req = self.client.post(&url).header("X-MBX-APIKEY", &self.api_key);
         req.send().await?.text().await
     }
 
     pub async fn keepalive_listen_key(&self, listen_key: &str) -> Result<String, reqwest::Error> {
-        let url = format!("https://fapi.binance.com/fapi/v1/listenKey?listenKey={}", listen_key);
+        let url = format!("https://testnet.binancefuture.com/fapi/v1/listenKey?listenKey={}", listen_key);
         let req = self.client.put(&url).header("X-MBX-APIKEY", &self.api_key);
         req.send().await?.text().await
     }
 
     pub async fn close_listen_key(&self, listen_key: &str) -> Result<String, reqwest::Error> {
-        let url = format!("https://fapi.binance.com/fapi/v1/listenKey?listenKey={}", listen_key);
+        let url = format!("https://testnet.binancefuture.com/fapi/v1/listenKey?listenKey={}", listen_key);
         let req = self.client.delete(&url).header("X-MBX-APIKEY", &self.api_key);
         req.send().await?.text().await
     }

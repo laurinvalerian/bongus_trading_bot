@@ -168,6 +168,9 @@ def main() -> None:
     print(f"  Avg ann. return     : {stats['avg_annualized_return_pct'] * 100:.1f}%")
     print(f"  Total gross yield   : {stats['total_gross_yield_pct'] * 100:.4f}%")
     print(f"  Total fees          : {stats['total_fees_pct'] * 100:.4f}%")
+    print(f"  Avg win             : {stats['avg_win_pct'] * 100:.4f}%")
+    print(f"  Avg loss            : {stats['avg_loss_pct'] * 100:.4f}%")
+    print(f"  Risk/Reward         : {stats['risk_reward_ratio']:.2f}")
     print("-" * 72)
 
     if args.enhanced_report:

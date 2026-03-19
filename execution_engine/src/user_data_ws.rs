@@ -49,7 +49,7 @@ impl UserDataWsManager {
                 continue;
             };
 
-            let ws_url = format!("wss://fstream.binance.com/ws/{}", listen_key); // Use fstream for futures
+            let ws_url = format!("wss://stream.binancefuture.com/ws/{}", listen_key); // Use fstream for futures
             info!("Connecting to User Data Stream at {}", ws_url);
 
             let mut heartbeat_interval = tokio::time::interval(Duration::from_secs(30 * 60)); // 30 minutes
