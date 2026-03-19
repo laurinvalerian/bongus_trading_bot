@@ -14,9 +14,7 @@ Ziel: Institutionelle Zuverlässigkeit, niedrigste Latenz (Tokyo-Server), konsis
 ## Hard Rules aus config.py & risk_engine.py
 - MAX_DRAWDOWN_PCT = 0.10 (10%)
 - SOFT_DRAWDOWN_PCT = 0.05 (5%)
-- MAX_GROSS_EXPOSURE_USD = 200_000
 - MAX_SYMBOL_CONCENTRATION = 0.50
-- NOTIONAL_PER_TRADE = 50_000 USD
 - ENTRY_ANN_FUNDING_THRESHOLD = 0.10 (10% annualisiert)
 - Immer Taker/Maker-Fee, Slippage und Funding-Schedule berücksichtigen
 - Max 1-2% Risiko pro Trade (auch wenn nicht explizit in Config)
