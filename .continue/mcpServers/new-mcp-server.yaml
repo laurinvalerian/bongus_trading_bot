@@ -1,0 +1,20 @@
+name: Bongus Trading Bot MCP Servers
+version: 0.0.1
+schema: v1
+
+mcpServers:
+  - name: playwright
+    description: Live Browser für Binance Funding Rates, Docs, Charts und Web-Recherche (maximaler externer Kontext)
+    command: npx
+    args:
+      - -y
+      - "@playwright/mcp@latest"
+    env: {}
+
+  - name: github
+    description: GitHub Issues, PRs, Commits und volles Repository (maximaler interner Kontext)
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-github"
+    env: {}
