@@ -74,7 +74,7 @@ def process_funding(raw_df):
         raw_df = raw_df[1:].reset_index(drop=True)
     
     raw_df = raw_df.iloc[:, :3] # Take only first 3 columns
-    raw_df.columns = ['calc_time', 'funding_rate', 'symbol']
+    raw_df.columns = ['calc_time', 'funding_interval_hours', 'funding_rate']
     
     # Convert millisecond timestamp to datetime
     raw_df['calc_time'] = pd.to_numeric(raw_df['calc_time'])
