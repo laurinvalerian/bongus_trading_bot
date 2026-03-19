@@ -1,7 +1,18 @@
-"""
-Central configuration for the Delta-Neutral Funding Arbitrage Backtester.
-All tunable parameters live here so you can tweak them in one place.
-"""
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+ENV = os.getenv("ENV", "testnet").lower()
+
+if ENV == "mainnet":
+    BINANCE_SPOT_REST_URL = "https://api.binance.com"
+    BINANCE_USD_M_REST_URL = "https://fapi.binance.com"
+    BINANCE_USD_M_WS_URL = "wss://fstream.binance.com/ws"
+else:
+    BINANCE_SPOT_REST_URL = "https://testnet.binance.vision"
+    BINANCE_USD_M_REST_URL = "https://testnet.binancefuture.com"
+    BINANCE_USD_M_WS_URL = "wss://stream.binancefuture.com/ws"
 
 # ── Cost Model ────────────────────────────────────────────────────────────────
 TAKER_FEE = 0.0004          # 0.04% per leg (standard Binance/Bybit retail)
@@ -30,14 +41,15 @@ EXIT_ANN_FUNDING_THRESHOLD = 0.00    # 5% annualized – too low to justify
 EXIT_DISCOUNT_THRESHOLD = -0.0005        # exit if perp trades at or below spot
 
 # ── Capital ───────────────────────────────────────────────────────────────────
-NOTIONAL_PER_TRADE = 50_000  # USD notional deployed per side (5x leverage on $10k demo)
+# Demo Account Constraints ($10k starting capital)
+NOTIONAL_PER_TRADE = 10_000   # USD notional deployed per side (1x leverage on $10k demo for safety)
 
 # ── Data & Latency Controls ────────────────────────────────────────────────
 MAX_ALLOWED_GAP_MINUTES = 1
 MAX_FUNDING_STALENESS_MINUTES = 8 * 60
 
 # ── Risk Limits ─────────────────────────────────────────────────────────────
-MAX_GROSS_EXPOSURE_USD = 200_000
+MAX_GROSS_EXPOSURE_USD = 40_000 # Max 4 open trades (4 * 10k)
 MAX_SYMBOL_CONCENTRATION = 0.50
 SOFT_DRAWDOWN_PCT = 0.05
 MAX_DRAWDOWN_PCT = 0.10

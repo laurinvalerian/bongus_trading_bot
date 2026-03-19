@@ -102,7 +102,8 @@ async fn main() {
         "BCHUSDT", "UNIUSDT", "NEARUSDT", "APTUSDT", "XLMUSDT", "ATOMUSDT", "ARBUSDT"
     ];
 
-    let binance_ws_url = "wss://stream.binancefuture.com/ws";
+    let binance_ws_url = std::env::var("BINANCE_USD_M_WS_URL")
+        .unwrap_or_else(|_| "wss://stream.binancefuture.com/ws".to_string());
 
     // Spawn WsConnectionManager for each asset
     for symbol in top_assets {
@@ -127,7 +128,7 @@ async fn main() {
             let mut rx = dash_tx_ipc.subscribe();
             tokio::spawn(async move {
                 while let Ok(msg) = rx.recv().await {
-                    let _ = socket.write_all(format!("{}\\n", msg).as_bytes()).await;
+                    let _ = socket.write_all(format!("{}\n", msg).as_bytes()).await;
                 }
             });
         }
