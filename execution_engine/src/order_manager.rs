@@ -7,7 +7,7 @@ use tokio::time::sleep;
 use tracing::{error, info, warn};
 use tokio::sync::broadcast;
 
-use crate::binance_rest::{BinanceRest, LegVenue, TradeSide};
+use crate::binance_rest::{BinanceRest, TradeSide};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum SystemState {
@@ -70,6 +70,7 @@ pub struct OrderManager {
     pub is_toxic: bool,
     pub last_brain_ping: Instant,
     pub current_gross_exposure_usd: f64,
+    pub max_gross_exposure_usd: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +102,11 @@ struct ChaseState {
 
 impl OrderManager {
     pub fn new(event_receiver: Receiver<EngineEvent>, engine_tx: tokio::sync::mpsc::Sender<EngineEvent>, api_key: String, secret_key: String, dash_tx: broadcast::Sender<String>) -> Self {
+        let max_gross_exposure_usd = std::env::var("DEMO_GROSS_EXPOSURE_LIMIT")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(40_000.0);
+
         Self {
             state: SystemState::Disconnected,
             internal_orders: HashMap::new(),
@@ -114,7 +120,12 @@ impl OrderManager {
             is_toxic: false,
             last_brain_ping: Instant::now(),
             current_gross_exposure_usd: 0.0,
+            max_gross_exposure_usd,
         }
+    }
+
+    fn emit_dashboard_event(&self, event: serde_json::Value) {
+        let _ = self.dash_tx.send(event.to_string());
     }
 
     async fn check_circuit_breakers(&mut self) -> bool {
@@ -125,8 +136,12 @@ impl OrderManager {
         }
         
         // Native circuit breaker: gross exposure
-        if self.current_gross_exposure_usd > 200_000.0 {
-            warn!("CRITICAL: Gross exposure limit exceeded! Halting new risk.");
+        if self.current_gross_exposure_usd > self.max_gross_exposure_usd {
+            warn!(
+                "CRITICAL: Gross exposure limit exceeded! current={} limit={}. Halting new risk.",
+                self.current_gross_exposure_usd,
+                self.max_gross_exposure_usd
+            );
             return true;
         }
 
@@ -228,6 +243,12 @@ impl OrderManager {
 
         if self.state != SystemState::Trading {
             warn!("System not currently trading; ignoring alpha instruction.");
+            self.emit_dashboard_event(serde_json::json!({
+                "event": "AlphaIgnored",
+                "reason": "system_not_trading",
+                "state": format!("{:?}", self.state),
+                "symbol": instruction.symbol
+            }));
             return;
         }
 
@@ -480,9 +501,23 @@ impl OrderManager {
                 symbol: chase_snapshot.symbol.clone(),
                 status: "NEW".to_string(),
             });
+            self.emit_dashboard_event(serde_json::json!({
+                "event": "OrderPlaced",
+                "leg": "spot",
+                "symbol": chase_snapshot.symbol.clone(),
+                "side": format!("{:?}", chase_snapshot.spot_side),
+                "quantity": chase_snapshot.quantity.clone(),
+                "client_order_id": chase_snapshot.spot_client_order_id.clone(),
+            }));
             placed = true;
         } else {
             error!("Failed Spot Maker: {:?}", spot_res.err());
+            self.emit_dashboard_event(serde_json::json!({
+                "event": "OrderPlacementFailed",
+                "leg": "spot",
+                "symbol": chase_snapshot.symbol.clone(),
+                "client_order_id": chase_snapshot.spot_client_order_id.clone(),
+            }));
         }
 
         if let Ok(body) = fut_res {
@@ -492,21 +527,44 @@ impl OrderManager {
                 symbol: chase_snapshot.symbol.clone(),
                 status: "NEW".to_string(),
             });
+            self.emit_dashboard_event(serde_json::json!({
+                "event": "OrderPlaced",
+                "leg": "futures",
+                "symbol": chase_snapshot.symbol.clone(),
+                "side": format!("{:?}", chase_snapshot.futures_side),
+                "quantity": chase_snapshot.quantity.clone(),
+                "client_order_id": chase_snapshot.futures_client_order_id.clone(),
+            }));
             placed = true;
         } else {
             error!("Failed Futures Maker: {:?}", fut_res.err());
+            self.emit_dashboard_event(serde_json::json!({
+                "event": "OrderPlacementFailed",
+                "leg": "futures",
+                "symbol": chase_snapshot.symbol.clone(),
+                "client_order_id": chase_snapshot.futures_client_order_id.clone(),
+            }));
         }
 
         if placed {
             if let Some(ref mut c) = self.chase {
                 c.phase = ChasePhase::DualMakerPlaced;
             }
+        } else {
+            self.chase = None;
+            self.emit_dashboard_event(serde_json::json!({
+                "event": "ChaseReset",
+                "reason": "both_maker_submissions_failed"
+            }));
         }
     }
 
     async fn execute_reconciliation_sequence(&mut self) {
         self.state = SystemState::Reconciling;
         info!("=== Beginning Reconciliation Sequence ===");
+        self.emit_dashboard_event(serde_json::json!({
+            "event": "ReconciliationStarted"
+        }));
 
         // STEP 1: Pause Trading & Flush internal
         info!("[Step 1] Pausing trading signal generation.");
@@ -519,20 +577,34 @@ impl OrderManager {
 
         // Fetch Exchange Truth
         info!("[Step 2b] Fetching Open Orders from Exchange...");
+        let mut degraded_mode = false;
         let open_orders_json = match self.binance_rest.get_open_orders().await {
             Ok(json) => json,
             Err(e) => {
-                warn!("Failed to fetch open orders: {}. Will retry reconciliation later.", e);
-                return; // Or implement local REST retry logic
+                warn!("Failed to fetch open orders: {}. Entering degraded reconciliation mode.", e);
+                degraded_mode = true;
+                self.emit_dashboard_event(serde_json::json!({
+                    "event": "ReconciliationFallback",
+                    "reason": "open_orders_fetch_failed",
+                    "error": e.to_string()
+                }));
+                "[]".to_string()
             }
         };
 
-        let parsed_orders: Result<Vec<Value>, _> = serde_json::from_str(&open_orders_json);
-        if parsed_orders.is_err() {
-            warn!("Failed to parse open orders JSON: {:?}", open_orders_json);
-            return;
-        }
-        let exchange_open_orders = parsed_orders.unwrap();
+        let exchange_open_orders: Vec<Value> = match serde_json::from_str(&open_orders_json) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                warn!("Failed to parse open orders JSON: {:?}", open_orders_json);
+                degraded_mode = true;
+                self.emit_dashboard_event(serde_json::json!({
+                    "event": "ReconciliationFallback",
+                    "reason": "open_orders_parse_failed",
+                    "error": e.to_string()
+                }));
+                Vec::new()
+            }
+        };
 
         // (We would also fetch balances here `self.binance_rest.get_account().await`)
         // info!("Fetching Account Balances...");
@@ -553,7 +625,7 @@ impl OrderManager {
                     if let Some(symbol) = order.get("symbol").and_then(|v| v.as_str()) {
                         info!("    -> Issuing REST DELETE for orphan order {} ({})", client_id, symbol);
                         // In real bot, await this response and verify it cancels
-                        let _ = self.binance_rest.cancel_order(symbol, client_id).await;
+                        let _ = self.binance_rest.cancel_futures_order(symbol, client_id).await;
                     }
                 }
             }
@@ -575,5 +647,10 @@ impl OrderManager {
         info!("[Step 5] State matrix synchronized (Dangling mitigated, Orphans purged).");
         self.state = SystemState::Trading;
         info!("=== System is TRADING ===");
+        self.emit_dashboard_event(serde_json::json!({
+            "event": "ReconciliationCompleted",
+            "mode": if degraded_mode { "degraded" } else { "normal" },
+            "state": "Trading"
+        }));
     }
 }

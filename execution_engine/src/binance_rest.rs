@@ -10,6 +10,7 @@ pub struct BinanceRest {
     api_key: String,
     secret_key: String,
     base_url: String,
+    spot_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -42,16 +43,22 @@ pub enum LegVenue {
 
 impl BinanceRest {
     pub fn new(api_key: String, secret_key: String) -> Self {
+        let base_url = std::env::var("BINANCE_USD_M_REST_URL")
+            .unwrap_or_else(|_| "https://testnet.binancefuture.com".to_string());
+        let spot_url = std::env::var("BINANCE_SPOT_REST_URL")
+            .unwrap_or_else(|_| "https://testnet.binance.vision".to_string());
+            
         Self {
             client: Client::new(),
             api_key,
             secret_key,
-            base_url: "https://testnet.binancefuture.com".to_string(), // Updated for Spot Testnet
+            base_url,
+            spot_url,
         }
     }
 
     pub async fn get_exchange_info(&self) -> Result<std::collections::HashMap<String, ExchangeSymbolInfo>, String> {
-        let url = "https://testnet.binancefuture.com/fapi/v1/exchangeInfo";
+        let url_str = format!("{}/fapi/v1/exchangeInfo", self.base_url); let url = url_str.as_str();
         let resp_result = self.client.get(url).send().await;
         let resp = match resp_result {
             Ok(r) => r,
@@ -163,12 +170,12 @@ impl BinanceRest {
     }
 
     pub async fn get_open_orders(&self) -> Result<String, reqwest::Error> {
-        let req = self.build_signed_request(Method::GET, "/api/v3/openOrders", vec![]);
+        let req = self.build_signed_request_with_base(Method::GET, &self.base_url, "/fapi/v1/openOrders", vec![]);
         req.send().await?.text().await
     }
 
     pub async fn get_account(&self) -> Result<String, reqwest::Error> {
-        let req = self.build_signed_request(Method::GET, "/api/v3/account", vec![]);
+        let req = self.build_signed_request_with_base(Method::GET, &self.base_url, "/fapi/v2/account", vec![]);
         req.send().await?.text().await
     }
 
@@ -198,7 +205,7 @@ impl BinanceRest {
             ("symbol", symbol.to_string()),
             ("origClientOrderId", order_id.to_string()),
         ];
-        let req = self.build_signed_request_with_base(Method::DELETE, "https://testnet.binancefuture.com", "/fapi/v1/order", params);
+        let req = self.build_signed_request_with_base(Method::DELETE, &self.base_url, "/fapi/v1/order", params);
         req.send().await?.text().await
     }
 
@@ -219,7 +226,7 @@ impl BinanceRest {
 
         let req = self.build_signed_request_with_base(
             Method::POST,
-            "https://testnet.binance.vision",
+            &self.spot_url,
             "/api/v3/order",
             params,
         );
@@ -246,7 +253,7 @@ impl BinanceRest {
 
         let req = self.build_signed_request_with_base(
             Method::POST,
-            "https://testnet.binance.vision",
+            &self.spot_url,
             "/api/v3/order",
             params,
         );
@@ -273,7 +280,7 @@ impl BinanceRest {
 
         let req = self.build_signed_request_with_base(
             Method::POST,
-            "https://testnet.binancefuture.com",
+            &self.base_url,
             "/fapi/v1/order",
             params,
         );
@@ -297,7 +304,7 @@ impl BinanceRest {
 
         let req = self.build_signed_request_with_base(
             Method::POST,
-            "https://testnet.binancefuture.com",
+            &self.base_url,
             "/fapi/v1/order",
             params,
         );
@@ -324,13 +331,13 @@ impl BinanceRest {
         let req = match venue {
             LegVenue::Spot => self.build_signed_request_with_base(
                 Method::GET,
-                "https://testnet.binance.vision",
+                &self.spot_url,
                 "/api/v3/order",
                 params,
             ),
             LegVenue::UsdtFutures => self.build_signed_request_with_base(
                 Method::GET,
-                "https://testnet.binancefuture.com",
+                &self.base_url,
                 "/fapi/v1/order",
                 params,
             ),
@@ -340,19 +347,19 @@ impl BinanceRest {
     }
 
     pub async fn create_listen_key(&self) -> Result<String, reqwest::Error> {
-        let url = "https://testnet.binancefuture.com/fapi/v1/listenKey".to_string();
+        let url = format!("{}/fapi/v1/listenKey", self.base_url);
         let req = self.client.post(&url).header("X-MBX-APIKEY", &self.api_key);
         req.send().await?.text().await
     }
 
     pub async fn keepalive_listen_key(&self, listen_key: &str) -> Result<String, reqwest::Error> {
-        let url = format!("https://testnet.binancefuture.com/fapi/v1/listenKey?listenKey={}", listen_key);
+        let url = format!("{}/fapi/v1/listenKey?listenKey={}", self.base_url, listen_key);
         let req = self.client.put(&url).header("X-MBX-APIKEY", &self.api_key);
         req.send().await?.text().await
     }
 
     pub async fn close_listen_key(&self, listen_key: &str) -> Result<String, reqwest::Error> {
-        let url = format!("https://testnet.binancefuture.com/fapi/v1/listenKey?listenKey={}", listen_key);
+        let url = format!("{}/fapi/v1/listenKey?listenKey={}", self.base_url, listen_key);
         let req = self.client.delete(&url).header("X-MBX-APIKEY", &self.api_key);
         req.send().await?.text().await
     }
